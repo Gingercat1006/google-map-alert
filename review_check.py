@@ -2,12 +2,12 @@ import asyncio
 import os
 import requests
 import json
+import re # 正規表現を使うために追加
 from playwright.async_api import async_playwright
 
 # ================= 設定エリア =================
 TARGET_URL = "https://www.google.com/maps/place/%E3%81%8F%E3%82%89%E5%AF%BF%E5%8F%B8+%E5%AF%9D%E5%B1%8B%E5%B7%9D%E6%89%93%E4%B8%8A%E5%BA%97/@34.758988,135.6562656,17z/data=!3m1!4b1!4m6!3m5!1s0x60011ee0b8a31271:0x692c89b1427ba689!8m2!3d34.758988!4d135.6562656!16s%2Fg%2F1tptqj6v?entry=ttu"
 
-# ★重要：環境変数から読み込むように変更（セキュリティ対策）
 CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_ACCESS_TOKEN")
 USER_ID = os.environ.get("LINE_USER_ID")
 
@@ -34,11 +34,22 @@ def send_line_message(text):
     except Exception as e:
         print(f"LINE送信エラー: {e}")
 
+# 時間表記などを削除して、純粋なテキストだけにする関数
+def normalize_text(text):
+    # "2 時間前", "3 週間前", "新規" などの変動する文字を消す
+    text = re.sub(r'\d+\s*(分|時間|日|週間|か月|年)前', '', text)
+    text = re.sub(r'新規', '', text)
+    # 改行やスペースも詰める
+    text = text.replace('\n', '').replace(' ', '').replace('　', '')
+    return text
+
 async def get_latest_review():
     async with async_playwright() as p:
-        # ★クラウド上では画面が出せないので必ず headless=True にする
         browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(locale="ja-JP", user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36")
+        context = await browser.new_context(
+            locale="ja-JP", 
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36"
+        )
         page = await context.new_page()
 
         print("ページにアクセス中...")
@@ -49,15 +60,14 @@ async def get_latest_review():
             await browser.close()
             return
 
-        await page.wait_for_timeout(3000)
+        await page.wait_for_timeout(5000) # 読み込み待ちを少し長めに
 
         # --- クチコミタブ ---
         try:
             await page.locator('button[role="tab"]', has_text="クチコミ").click()
+            await page.wait_for_timeout(2000)
         except:
-            pass # エラー無視して進む（構造が変わっているかもなので）
-
-        await page.wait_for_timeout(2000)
+            pass 
 
         # --- 並べ替え ---
         try:
@@ -68,7 +78,6 @@ async def get_latest_review():
 
         # --- 新しい順 ---
         try:
-            # 複数のパターンでトライ
             if await page.locator('[role="menuitemradio"]', has_text="新しい順").count() > 0:
                 await page.locator('[role="menuitemradio"]', has_text="新しい順").first.click()
             else:
@@ -78,26 +87,31 @@ async def get_latest_review():
         except:
             pass
 
-        # --- 取得 ---
+        # --- 取得と判定 ---
         reviews = page.locator('div[data-review-id]')
         if await reviews.count() > 0:
-            text_content = await reviews.first.inner_text()
+            raw_text = await reviews.first.inner_text()
             
-            # 比較
-            current_signature = text_content[:100].replace("\n", "")
+            # ★変更点：時間表記などを削除した状態で比較する
+            current_signature = normalize_text(raw_text[:150]) 
+            
             last_signature = ""
-            
             if os.path.exists(SAVE_FILE):
                 with open(SAVE_FILE, "r", encoding="utf-8") as f:
                     last_signature = f.read().strip()
 
+            print(f"Current: {current_signature[:30]}...")
+            print(f"Last   : {last_signature[:30]}...")
+
             if current_signature != last_signature:
-                print("新しい投稿あり")
-                msg = f"【新しいクチコミ】\n{text_content[:200]}..."
-                send_line_message(msg)
-                
-                with open(SAVE_FILE, "w", encoding="utf-8") as f:
-                    f.write(current_signature)
+                # 完全に中身がない（読み込みミス）場合は通知しない
+                if len(current_signature) > 5:
+                    print("新しい投稿あり")
+                    msg = f"【新しいクチコミ】\n{raw_text[:200]}..."
+                    send_line_message(msg)
+                    
+                    with open(SAVE_FILE, "w", encoding="utf-8") as f:
+                        f.write(current_signature)
             else:
                 print("変更なし")
         else:
