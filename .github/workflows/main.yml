@@ -2,8 +2,8 @@ name: Google Review Check
 
 on:
   schedule:
-    # 日本時間 23:00 (UTC 14:00) に実行
-    - cron: '0 14 * * *'
+    # 毎時 0分 に実行
+    - cron: '0 * * * *'
   workflow_dispatch: # 手動実行ボタンも有効にする
 
 jobs:
