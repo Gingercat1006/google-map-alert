@@ -15,15 +15,28 @@ SAVE_FILE = "last_review.txt"
 # ==============================================
 
 def send_line_message(text):
-    if not CHANNEL_ACCESS_TOKEN or not USER_ID:
+    if not CHANNEL_ACCESS_TOKEN: # USER_IDはもう使わないのでチェック不要
         print("LINE設定が見つかりません")
         return
 
-    url = "https://api.line.me/v2/bot/message/push"
+    # ★変更点1：URLを 'push' から 'broadcast' に変える
+    url = "https://api.line.me/v2/bot/message/broadcast"
+    
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {CHANNEL_ACCESS_TOKEN}"
     }
+    
+    # ★変更点2：宛先（"to": USER_ID）を削除する
+    data = {
+        "messages": [{"type": "text", "text": text}]
+    }
+    
+    try:
+        requests.post(url, headers=headers, data=json.dumps(data))
+        print("LINEに通知を送りました（全員宛）")
+    except Exception as e:
+        print(f"LINE送信エラー: {e}")
     data = {
         "to": USER_ID,
         "messages": [{"type": "text", "text": text}]
