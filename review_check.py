@@ -64,25 +64,29 @@ async def get_latest_review():
         except:
             pass 
 
-        # 1. クチコミタブクリック（★ここを修正）
+        # 1. クチコミタブクリック（★ここを修正：部分一致OKにする）
         try:
             print("「クチコミ」タブを探しています...")
             
-            # 修正点: 
-            # 1. buttonタグだけでなく、divタグなども対象にする ('*')
-            # 2. テキストが「クチコミ」または「Reviews」と **完全に一致する** ものを探す
-            #    （「〇〇件のクチコミ」などを除外するため）
-            tab_locator = page.locator('*[role="tab"]').filter(has_text=re.compile(r"^(クチコミ|Reviews)$"))
+            # 戦略A: aria-label に "クチコミ" が含まれるボタン (完全一致ではなく部分一致 '*=')
+            tab_btn = page.locator('button[aria-label*="クチコミ"], button[aria-label*="Reviews"]')
             
-            if await tab_locator.count() > 0:
-                await tab_locator.first.click()
-                print("OK: クチコミタブ（完全一致）をクリックしました")
+            if await tab_btn.count() > 0:
+                await tab_btn.first.click()
+                print("OK: クチコミタブ（aria-label部分一致）をクリックしました")
             else:
-                # もし完全一致がなければ、aria-label属性で探す（より確実）
-                print("テキストで見つからないため、属性で探します...")
-                attr_locator = page.locator('*[aria-label="クチコミ"], *[aria-label="Reviews"]')
-                await attr_locator.first.click()
-                print("OK: 属性検索でクリックしました")
+                # 戦略B: ボタンの中に「クチコミ」という文字がある場合
+                print("ラベルで見つからないため、テキストを含むボタンを探します...")
+                text_btn = page.locator('button').filter(has_text=re.compile(r"(クチコミ|Reviews)")).first
+                if await text_btn.count() > 0:
+                    await text_btn.click()
+                    print("OK: テキストを含むボタンをクリックしました")
+                else:
+                    # 戦略C: 「500件」のような件数リンクをクリック（これが一番確実な場合が多い）
+                    print("ボタンが見つからないため、件数リンクを探します...")
+                    count_link = page.locator(':text-matches("(\\d+)\\s*(件の)?(クチコミ|Reviews)")').first
+                    await count_link.click()
+                    print("OK: 件数リンクをクリックしました")
             
             await page.wait_for_timeout(5000)
 
@@ -92,7 +96,8 @@ async def get_latest_review():
         # 2. 並べ替え
         try:
             print("並べ替えを試みます...")
-            # 「並べ替え」または「Sort」を含むボタン
+            
+            # パターンA: 並べ替えボタン
             sort_btn = page.locator('button[aria-label*="並べ替え"], button[aria-label*="Sort"]')
             
             if await sort_btn.count() > 0:
@@ -101,22 +106,25 @@ async def get_latest_review():
                 await page.wait_for_timeout(2000)
                 
                 # メニューから「新しい順」
-                newest_option = page.locator('[role="menuitemradio"]').filter(has_text=re.compile(r"(新しい順|Newest)"))
+                newest_option = page.locator('[role="menuitemradio"], div[role="menuitem"]').filter(has_text=re.compile(r"(新しい順|Newest)"))
                 if await newest_option.count() > 0:
                     await newest_option.first.click()
-                    print("OK: 「新しい順」を選択しました")
+                    print("OK: メニューから「新しい順」を選択しました")
                 else:
-                    await page.get_by_text(re.compile(r"(新しい順|Newest)")).click()
-                    print("OK: 「新しい順」を選択しました（テキスト）")
+                    # テキストクリック（バックアップ）
+                    await page.get_by_text(re.compile(r"(新しい順|Newest)")).first.click()
+                    print("OK: テキストで「新しい順」を選択しました")
+
             else:
-                print("並べ替えボタンが見つかりません。直接ボタンを探します...")
-                # タイプB：「新しい順」などが直接出ている場合
+                print("並べ替えボタンなし。直接「最新」ボタンを探します...")
+                # パターンB: 直接ボタン (新しい順、最新、Newest)
                 direct_btn = page.locator('button').filter(has_text=re.compile(r"(^新しい順$|^Newest$|^最新$)")).first
+                
                 if await direct_btn.count() > 0:
                     await direct_btn.click()
                     print("OK: 「最新」ボタンを直接クリックしました")
                 else:
-                    print("【重要】並べ替えに関するボタンが一切見つかりませんでした")
+                    print("【注意】並べ替えボタンが見つかりませんでした。デフォルト順の可能性があります。")
 
             await page.wait_for_timeout(5000)
         except Exception as e:
