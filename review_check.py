@@ -28,13 +28,14 @@ def send_line_message(text):
     }
     
     # ★変更点2：宛先（"to": USER_ID）を削除する
+    
     data = {
+        "to": USER_ID,
         "messages": [{"type": "text", "text": text}]
     }
-    
     try:
         requests.post(url, headers=headers, data=json.dumps(data))
-        print("LINEに通知を送りました（全員宛）")
+        print("LINEに通知を送りました")
     except Exception as e:
         print(f"LINE送信エラー: {e}")
 
