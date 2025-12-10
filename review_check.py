@@ -6,7 +6,8 @@ import re
 from playwright.async_api import async_playwright
 
 # ================= 設定エリア =================
-TARGET_URL = "https://www.google.com/maps/place/%E3%81%8F%E3%82%89%E5%AF%BF%E5%8F%B8+%E5%AF%9D%E5%B1%8B%E5%B7%9D%E6%89%93%E4%B8%8A%E5%BA%97/@34.758988,135.6562656,17z/data=!3m1!4b1!4m6!3m5!1s0x60011ee0b8a31271:0x692c89b1427ba689!8m2!3d34.758988!4d135.6562656!16s%2Fg%2F1tptqj6v?entry=ttu"
+# ★変更点：URLの最後に "&hl=ja" を追加して、強制的に日本語表示にする
+TARGET_URL = "https://www.google.com/maps/place/%E3%81%8F%E3%82%89%E5%AF%BF%E5%8F%B8+%E5%AF%9D%E5%B1%8B%E5%B7%9D%E6%89%93%E4%B8%8A%E5%BA%97/@34.758988,135.6562656,17z/data=!3m1!4b1!4m6!3m5!1s0x60011ee0b8a31271:0x692c89b1427ba689!8m2!3d34.758988!4d135.6562656!16s%2Fg%2F1tptqj6v?entry=ttu&hl=ja"
 
 CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_ACCESS_TOKEN")
 USER_ID = os.environ.get("LINE_USER_ID")
@@ -20,16 +21,13 @@ def send_line_message(text):
 
     # 全員送信（Broadcast）
     url = "https://api.line.me/v2/bot/message/broadcast"
-    
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {CHANNEL_ACCESS_TOKEN}"
     }
-    
     data = {
         "messages": [{"type": "text", "text": text}]
     }
-    
     try:
         requests.post(url, headers=headers, data=json.dumps(data))
         print("LINEに通知を送りました")
@@ -46,56 +44,71 @@ async def get_latest_review():
     async with async_playwright() as p:
         print("ブラウザを起動します...")
         browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(
-            locale="ja-JP", 
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36"
-        )
+        # 言語設定を日本語に強力固定
+        context = await browser.new_context(locale="ja-JP", timezone_id="Asia/Tokyo")
         page = await context.new_page()
 
-        print(f"URLにアクセス中: {TARGET_URL[:30]}...")
+        print(f"URLにアクセス中...")
         try:
             await page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=60000)
+            await page.wait_for_timeout(5000)
         except:
             print("【エラー】ページにアクセスできませんでした")
             await browser.close()
             return
 
-        await page.wait_for_timeout(5000)
+        # ★追加：海外アクセス時の「同意する」ポップアップを消す処理
+        try:
+            # 日本語または英語の「同意」ボタンを探して押す
+            consent_button = page.locator('button', has_text=re.compile(r"(すべて同意|Accept all)"))
+            if await consent_button.count() > 0:
+                print("邪魔な同意ポップアップが出たので消します...")
+                await consent_button.first.click()
+                await page.wait_for_timeout(3000)
+        except:
+            pass # 出なければスルー
 
-        # 1. クチコミタブ
+        # 1. クチコミタブ（英語対応）
         try:
             print("「クチコミ」タブを探しています...")
-            await page.locator('button[role="tab"]', has_text="クチコミ").click()
+            # 日本語の「クチコミ」か、英語の「Reviews」を探す
+            tab_btn = page.locator('button[role="tab"]', has_text=re.compile(r"(クチコミ|Reviews)"))
+            await tab_btn.first.click()
             print("OK: クチコミタブをクリックしました")
             await page.wait_for_timeout(3000)
         except Exception as e:
             print(f"【失敗】クチコミタブが見つかりません: {e}")
+            # 万が一のためにページタイトルを表示（デバッグ用）
+            print(f"現在のページタイトル: {await page.title()}")
 
-        # 2. 並べ替えボタン
+        # 2. 並べ替えボタン（英語対応）
         try:
             print("「並べ替え」ボタンを探しています...")
-            await page.locator("button", has_text="並べ替え").click()
+            # 日本語の「並べ替え」か、英語の「Sort」を探す
+            sort_btn = page.locator("button", has_text=re.compile(r"(並べ替え|Sort)"))
+            await sort_btn.first.click()
             print("OK: 並べ替えボタンをクリックしました")
             await page.wait_for_timeout(2000)
         except Exception as e:
             print(f"【失敗】並べ替えボタンが見つかりません: {e}")
 
-        # 3. 新しい順
+        # 3. 新しい順（英語対応）
         try:
             print("「新しい順」を選択しようとしています...")
-            # 複数のパターンで探す
-            menu_item = page.locator('[role="menuitemradio"]', has_text="新しい順")
-            if await menu_item.count() > 0:
-                await menu_item.first.click()
-                print("OK: 「新しい順」をクリックしました（menuitemradio）")
+            # 日本語の「新しい順」か、英語の「Newest」を探す
+            newest_btn = page.locator('[role="menuitemradio"]', has_text=re.compile(r"(新しい順|Newest)"))
+            
+            if await newest_btn.count() > 0:
+                await newest_btn.first.click()
+                print("OK: 「新しい順」をクリックしました")
             else:
-                await page.get_by_text("新しい順").click()
+                # テキスト検索のバックアップ
+                await page.get_by_text(re.compile(r"(新しい順|Newest)")).click()
                 print("OK: 「新しい順」をクリックしました（テキスト検索）")
             
-            await page.wait_for_timeout(5000) # 読み込み待ちを長めに
+            await page.wait_for_timeout(5000)
         except Exception as e:
-            print(f"【失敗】「新しい順」が押せませんでした（重要）: {e}")
-            print("※この場合、古い順のままになっている可能性があります")
+            print(f"【失敗】「新しい順」が押せませんでした: {e}")
 
         # 4. 取得と判定
         reviews = page.locator('div[data-review-id]')
@@ -105,14 +118,10 @@ async def get_latest_review():
         if count > 0:
             raw_text = await reviews.first.inner_text()
             
-            # ★デバッグ用：実際に読み取った内容を表示する
-            print("\n" + "="*20)
-            print("【ロボットが見ている最新の口コミ】")
-            print(raw_text[:100].replace('\n', ' ')) 
-            print("="*20 + "\n")
+            # ログ表示（改行をスペースにして見やすく）
+            print(f"【最新の口コミ内容】: {raw_text[:50].replace('\n', ' ')}...")
 
             current_signature = normalize_text(raw_text[:150]) 
-            
             last_signature = ""
             if os.path.exists(SAVE_FILE):
                 with open(SAVE_FILE, "r", encoding="utf-8") as f:
