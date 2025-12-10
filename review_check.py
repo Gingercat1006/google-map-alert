@@ -9,7 +9,7 @@ from playwright.async_api import async_playwright
 TARGET_URL = "https://www.google.com/maps/place/%E3%81%8F%E3%82%89%E5%AF%BF%E5%8F%B8+%E5%AF%9D%E5%B1%8B%E5%B7%9D%E6%89%93%E4%B8%8A%E5%BA%97/@34.758988,135.6562656,17z/data=!3m1!4b1!4m6!3m5!1s0x60011ee0b8a31271:0x692c89b1427ba689!8m2!3d34.758988!4d135.6562656!16s%2Fg%2F1tptqj6v?entry=ttu"
 
 CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_ACCESS_TOKEN")
-# USER_ID は全員送信（broadcast）にするので不要ですが、エラー防止で残しておいても無害です
+# 全員送信（Broadcast）なのでUSER_IDは使いませんが、エラー防止で残しておきます
 USER_ID = os.environ.get("LINE_USER_ID")
 
 SAVE_FILE = "last_review.txt"
@@ -20,7 +20,7 @@ def send_line_message(text):
         print("LINE設定が見つかりません")
         return
 
-    # ★全員送信（ブロードキャスト）用のURL
+    # ★全員に送るURL（Broadcast）
     url = "https://api.line.me/v2/bot/message/broadcast"
     
     headers = {
@@ -28,27 +28,26 @@ def send_line_message(text):
         "Authorization": f"Bearer {CHANNEL_ACCESS_TOKEN}"
     }
     
-    # ★宛先指定（to）は無しで、メッセージだけ設定する
+    # ★宛先(to)は指定せず、メッセージだけ入れるのが正解
     data = {
         "messages": [{"type": "text", "text": text}]
     }
     
     try:
-        # ここで1回だけ送信する
         requests.post(url, headers=headers, data=json.dumps(data))
         print("LINEに通知を送りました（全員宛）")
     except Exception as e:
         print(f"LINE送信エラー: {e}")
 
-# 最強版：あらゆる日付っぽい表現を根こそぎ消す
+# ★最強版：時間だけでなく「先月」「昨日」なども消す機能
 def normalize_text(text):
-    # 1. 具体的な単位（分、時間、日、週間、か月、ヶ月、年）を消す
+    # 1. 数字＋単位（1時間前、3週間前など）を消す
     text = re.sub(r'\d+\s*(分|時間|日|週間|か?ヶ?月|年)前', '', text)
     
-    # 2. "先月" "昨日" などの単語も消す
+    # 2. "新規", "先月", "昨日" などの単語も消す（これが大事！）
     text = re.sub(r'(新規|先月|先週|昨日|今日)', '', text)
     
-    # 3. 念のため記号やスペースを全部詰めて、文字の並びだけで比較する
+    # 3. 記号やスペースを全部詰める
     text = re.sub(r'\s+', '', text) 
     
     return text
@@ -102,7 +101,7 @@ async def get_latest_review():
         if await reviews.count() > 0:
             raw_text = await reviews.first.inner_text()
             
-            # 時間を削除したテキストを作る
+            # 時間や「先月」などを削除したテキストを作る
             current_signature = normalize_text(raw_text[:150]) 
             
             last_signature = ""
@@ -114,6 +113,7 @@ async def get_latest_review():
             print(f"前回: {last_signature[:30]}...")
 
             if current_signature != last_signature:
+                # 読み込みミス防止（あまりに短い場合は無視）
                 if len(current_signature) > 5:
                     print("新しい投稿あり")
                     msg = f"【新しいクチコミ】\n{raw_text[:200]}..."
