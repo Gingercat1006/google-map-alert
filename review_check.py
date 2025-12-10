@@ -18,7 +18,7 @@ def send_line_message(text):
         print("LINE設定が見つかりません")
         return
 
-    # ★全員送信用のURL
+    # 全員送信（Broadcast）
     url = "https://api.line.me/v2/bot/message/broadcast"
     
     headers = {
@@ -31,18 +31,11 @@ def send_line_message(text):
     }
     
     try:
-        # ★ここで1回だけ全員に送る（これで完了！）
         requests.post(url, headers=headers, data=json.dumps(data))
-        print("LINEに通知を送りました（全員宛）")
+        print("LINEに通知を送りました")
     except Exception as e:
         print(f"LINE送信エラー: {e}")
 
-    # ★注意：ここに書いてあった「2回目の送信処理」は完全に消しました！
-    # これがあると「全員に2回」届いてしまいます。
-
-# -----------------------------------------------------------
-# 以下は変更なし（そのままコピーしてください）
-# -----------------------------------------------------------
 def normalize_text(text):
     text = re.sub(r'\d+\s*(分|時間|日|週間|か?ヶ?月|年)前', '', text)
     text = re.sub(r'(新規|先月|先週|昨日|今日)', '', text)
@@ -51,6 +44,7 @@ def normalize_text(text):
 
 async def get_latest_review():
     async with async_playwright() as p:
+        print("ブラウザを起動します...")
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(
             locale="ja-JP", 
@@ -58,61 +52,84 @@ async def get_latest_review():
         )
         page = await context.new_page()
 
-        print("ページにアクセス中...")
+        print(f"URLにアクセス中: {TARGET_URL[:30]}...")
         try:
             await page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=60000)
         except:
-            print("アクセス不可")
+            print("【エラー】ページにアクセスできませんでした")
             await browser.close()
             return
 
         await page.wait_for_timeout(5000)
 
+        # 1. クチコミタブ
         try:
+            print("「クチコミ」タブを探しています...")
             await page.locator('button[role="tab"]', has_text="クチコミ").click()
-            await page.wait_for_timeout(2000)
-        except:
-            pass 
+            print("OK: クチコミタブをクリックしました")
+            await page.wait_for_timeout(3000)
+        except Exception as e:
+            print(f"【失敗】クチコミタブが見つかりません: {e}")
 
+        # 2. 並べ替えボタン
         try:
+            print("「並べ替え」ボタンを探しています...")
             await page.locator("button", has_text="並べ替え").click()
+            print("OK: 並べ替えボタンをクリックしました")
             await page.wait_for_timeout(2000)
-        except:
-            pass
+        except Exception as e:
+            print(f"【失敗】並べ替えボタンが見つかりません: {e}")
 
+        # 3. 新しい順
         try:
-            if await page.locator('[role="menuitemradio"]', has_text="新しい順").count() > 0:
-                await page.locator('[role="menuitemradio"]', has_text="新しい順").first.click()
+            print("「新しい順」を選択しようとしています...")
+            # 複数のパターンで探す
+            menu_item = page.locator('[role="menuitemradio"]', has_text="新しい順")
+            if await menu_item.count() > 0:
+                await menu_item.first.click()
+                print("OK: 「新しい順」をクリックしました（menuitemradio）")
             else:
                 await page.get_by_text("新しい順").click()
+                print("OK: 「新しい順」をクリックしました（テキスト検索）")
             
-            await page.wait_for_timeout(3000)
-        except:
-            pass
+            await page.wait_for_timeout(5000) # 読み込み待ちを長めに
+        except Exception as e:
+            print(f"【失敗】「新しい順」が押せませんでした（重要）: {e}")
+            print("※この場合、古い順のままになっている可能性があります")
 
+        # 4. 取得と判定
         reviews = page.locator('div[data-review-id]')
-        if await reviews.count() > 0:
+        count = await reviews.count()
+        print(f"見つかった口コミの数: {count}件")
+
+        if count > 0:
             raw_text = await reviews.first.inner_text()
+            
+            # ★デバッグ用：実際に読み取った内容を表示する
+            print("\n" + "="*20)
+            print("【ロボットが見ている最新の口コミ】")
+            print(raw_text[:100].replace('\n', ' ')) 
+            print("="*20 + "\n")
+
             current_signature = normalize_text(raw_text[:150]) 
+            
             last_signature = ""
             if os.path.exists(SAVE_FILE):
                 with open(SAVE_FILE, "r", encoding="utf-8") as f:
                     last_signature = f.read().strip()
 
-            print(f"今回: {current_signature[:30]}...")
-            print(f"前回: {last_signature[:30]}...")
-
             if current_signature != last_signature:
                 if len(current_signature) > 5:
-                    print("新しい投稿あり")
+                    print("★判定: 新しい投稿です！通知を送ります。")
                     msg = f"【新しいクチコミ】\n{raw_text[:200]}..."
                     send_line_message(msg)
+                    
                     with open(SAVE_FILE, "w", encoding="utf-8") as f:
                         f.write(current_signature)
             else:
-                print("変更なし")
+                print("★判定: 前回と同じでした（通知なし）")
         else:
-            print("クチコミ取得失敗")
+            print("【エラー】口コミ要素が見つかりませんでした")
 
         await browser.close()
 
