@@ -2,7 +2,7 @@ import asyncio
 import os
 import requests
 import json
-import re # ★追加：文字を加工する機能
+import re 
 from playwright.async_api import async_playwright
 
 # ================= 設定エリア =================
@@ -10,16 +10,15 @@ TARGET_URL = "https://www.google.com/maps/place/%E3%81%8F%E3%82%89%E5%AF%BF%E5%8
 
 CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_ACCESS_TOKEN")
 USER_ID = os.environ.get("LINE_USER_ID")
-
 SAVE_FILE = "last_review.txt"
 # ==============================================
 
 def send_line_message(text):
-    if not CHANNEL_ACCESS_TOKEN: # USER_IDはもう使わないのでチェック不要
+    if not CHANNEL_ACCESS_TOKEN:
         print("LINE設定が見つかりません")
         return
 
-    # ★変更点1：URLを 'push' から 'broadcast' に変える
+    # ★全員送信用のURL
     url = "https://api.line.me/v2/bot/message/broadcast"
     
     headers = {
@@ -27,30 +26,31 @@ def send_line_message(text):
         "Authorization": f"Bearer {CHANNEL_ACCESS_TOKEN}"
     }
     
-    # ★変更点2：宛先（"to": USER_ID）を削除する
-    
     data = {
-        "to": USER_ID,
         "messages": [{"type": "text", "text": text}]
     }
+    
     try:
+        # ★ここで1回だけ全員に送る（これで完了！）
         requests.post(url, headers=headers, data=json.dumps(data))
-        print("LINEに通知を送りました")
+        print("LINEに通知を送りました（全員宛）")
     except Exception as e:
         print(f"LINE送信エラー: {e}")
 
-# ★重要：時間表記などを削除して、純粋なテキストだけにする関数
+    # ★注意：ここに書いてあった「2回目の送信処理」は完全に消しました！
+    # これがあると「全員に2回」届いてしまいます。
+
+# -----------------------------------------------------------
+# 以下は変更なし（そのままコピーしてください）
+# -----------------------------------------------------------
 def normalize_text(text):
-    # "2 時間前", "3 週間前", "新規" などの変動する文字を消す
-    text = re.sub(r'\d+\s*(分|時間|日|週間|か月|年)前', '', text)
-    text = re.sub(r'新規', '', text)
-    # 改行やスペースも詰める
-    text = text.replace('\n', '').replace(' ', '').replace('　', '')
+    text = re.sub(r'\d+\s*(分|時間|日|週間|か?ヶ?月|年)前', '', text)
+    text = re.sub(r'(新規|先月|先週|昨日|今日)', '', text)
+    text = re.sub(r'\s+', '', text) 
     return text
 
 async def get_latest_review():
     async with async_playwright() as p:
-        # サーバー用なので必ず headless=True
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(
             locale="ja-JP", 
@@ -68,21 +68,18 @@ async def get_latest_review():
 
         await page.wait_for_timeout(5000)
 
-        # --- クチコミタブ ---
         try:
             await page.locator('button[role="tab"]', has_text="クチコミ").click()
             await page.wait_for_timeout(2000)
         except:
             pass 
 
-        # --- 並べ替え ---
         try:
             await page.locator("button", has_text="並べ替え").click()
             await page.wait_for_timeout(2000)
         except:
             pass
 
-        # --- 新しい順 ---
         try:
             if await page.locator('[role="menuitemradio"]', has_text="新しい順").count() > 0:
                 await page.locator('[role="menuitemradio"]', has_text="新しい順").first.click()
@@ -93,14 +90,10 @@ async def get_latest_review():
         except:
             pass
 
-        # --- 取得と判定 ---
         reviews = page.locator('div[data-review-id]')
         if await reviews.count() > 0:
             raw_text = await reviews.first.inner_text()
-            
-            # ★ここで時間を削除したテキストを作る
             current_signature = normalize_text(raw_text[:150]) 
-            
             last_signature = ""
             if os.path.exists(SAVE_FILE):
                 with open(SAVE_FILE, "r", encoding="utf-8") as f:
@@ -110,12 +103,10 @@ async def get_latest_review():
             print(f"前回: {last_signature[:30]}...")
 
             if current_signature != last_signature:
-                # 完全に中身がない（読み込みミス）場合は無視
                 if len(current_signature) > 5:
                     print("新しい投稿あり")
                     msg = f"【新しいクチコミ】\n{raw_text[:200]}..."
                     send_line_message(msg)
-                    
                     with open(SAVE_FILE, "w", encoding="utf-8") as f:
                         f.write(current_signature)
             else:
