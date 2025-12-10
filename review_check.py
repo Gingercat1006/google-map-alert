@@ -2,24 +2,25 @@ import asyncio
 import os
 import requests
 import json
-import re # ★追加：文字を加工する機能
+import re 
 from playwright.async_api import async_playwright
 
 # ================= 設定エリア =================
 TARGET_URL = "https://www.google.com/maps/place/%E3%81%8F%E3%82%89%E5%AF%BF%E5%8F%B8+%E5%AF%9D%E5%B1%8B%E5%B7%9D%E6%89%93%E4%B8%8A%E5%BA%97/@34.758988,135.6562656,17z/data=!3m1!4b1!4m6!3m5!1s0x60011ee0b8a31271:0x692c89b1427ba689!8m2!3d34.758988!4d135.6562656!16s%2Fg%2F1tptqj6v?entry=ttu"
 
 CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_ACCESS_TOKEN")
+# USER_ID は全員送信（broadcast）にするので不要ですが、エラー防止で残しておいても無害です
 USER_ID = os.environ.get("LINE_USER_ID")
 
 SAVE_FILE = "last_review.txt"
 # ==============================================
 
 def send_line_message(text):
-    if not CHANNEL_ACCESS_TOKEN: # USER_IDはもう使わないのでチェック不要
+    if not CHANNEL_ACCESS_TOKEN:
         print("LINE設定が見つかりません")
         return
 
-    # ★変更点1：URLを 'push' から 'broadcast' に変える
+    # ★全員送信（ブロードキャスト）用のURL
     url = "https://api.line.me/v2/bot/message/broadcast"
     
     headers = {
@@ -27,38 +28,33 @@ def send_line_message(text):
         "Authorization": f"Bearer {CHANNEL_ACCESS_TOKEN}"
     }
     
-    # ★変更点2：宛先（"to": USER_ID）を削除する
+    # ★宛先指定（to）は無しで、メッセージだけ設定する
     data = {
         "messages": [{"type": "text", "text": text}]
     }
     
     try:
+        # ここで1回だけ送信する
         requests.post(url, headers=headers, data=json.dumps(data))
         print("LINEに通知を送りました（全員宛）")
     except Exception as e:
         print(f"LINE送信エラー: {e}")
-    data = {
-        "to": USER_ID,
-        "messages": [{"type": "text", "text": text}]
-    }
-    try:
-        requests.post(url, headers=headers, data=json.dumps(data))
-        print("LINEに通知を送りました")
-    except Exception as e:
-        print(f"LINE送信エラー: {e}")
 
-# ★重要：時間表記などを削除して、純粋なテキストだけにする関数
+# 最強版：あらゆる日付っぽい表現を根こそぎ消す
 def normalize_text(text):
-    # "2 時間前", "3 週間前", "新規" などの変動する文字を消す
-    text = re.sub(r'\d+\s*(分|時間|日|週間|か月|年)前', '', text)
-    text = re.sub(r'新規', '', text)
-    # 改行やスペースも詰める
-    text = text.replace('\n', '').replace(' ', '').replace('　', '')
+    # 1. 具体的な単位（分、時間、日、週間、か月、ヶ月、年）を消す
+    text = re.sub(r'\d+\s*(分|時間|日|週間|か?ヶ?月|年)前', '', text)
+    
+    # 2. "先月" "昨日" などの単語も消す
+    text = re.sub(r'(新規|先月|先週|昨日|今日)', '', text)
+    
+    # 3. 念のため記号やスペースを全部詰めて、文字の並びだけで比較する
+    text = re.sub(r'\s+', '', text) 
+    
     return text
 
 async def get_latest_review():
     async with async_playwright() as p:
-        # サーバー用なので必ず headless=True
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(
             locale="ja-JP", 
@@ -106,7 +102,7 @@ async def get_latest_review():
         if await reviews.count() > 0:
             raw_text = await reviews.first.inner_text()
             
-            # ★ここで時間を削除したテキストを作る
+            # 時間を削除したテキストを作る
             current_signature = normalize_text(raw_text[:150]) 
             
             last_signature = ""
@@ -118,7 +114,6 @@ async def get_latest_review():
             print(f"前回: {last_signature[:30]}...")
 
             if current_signature != last_signature:
-                # 完全に中身がない（読み込みミス）場合は無視
                 if len(current_signature) > 5:
                     print("新しい投稿あり")
                     msg = f"【新しいクチコミ】\n{raw_text[:200]}..."
