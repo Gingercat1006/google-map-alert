@@ -44,8 +44,14 @@ async def get_latest_review():
     async with async_playwright() as p:
         print("ブラウザを起動します...")
         browser = await p.chromium.launch(headless=True)
-        # 言語設定を日本語に強力固定
-        context = await browser.new_context(locale="ja-JP", timezone_id="Asia/Tokyo")
+        
+        # ★重要変更：画面サイズをPCサイズ（1920x1080）に固定！
+        # これをしないと、ボタンが「もっと見る」の中に隠れたりします
+        context = await browser.new_context(
+            locale="ja-JP", 
+            timezone_id="Asia/Tokyo",
+            viewport={"width": 1920, "height": 1080} 
+        )
         page = await context.new_page()
 
         print(f"URLにアクセス中...")
@@ -67,30 +73,46 @@ async def get_latest_review():
         except:
             pass 
 
-        # 1. クチコミタブ
+        # 1. クチコミタブ（条件を緩和）
         try:
             print("「クチコミ」タブを探しています...")
-            tab_btn = page.locator('button[role="tab"]', has_text=re.compile(r"(クチコミ|Reviews)"))
-            await tab_btn.first.click()
-            print("OK: クチコミタブをクリックしました")
-            await page.wait_for_timeout(3000)
+            # role="tab" を削除し、「クチコミ」という文字を含むボタンなら何でもOKにする
+            # aria-label（読み上げ用テキスト）も探す対象にする
+            tab_btn = page.locator('button[aria-label*="クチコミ"], button[aria-label*="Reviews"], button:has-text("クチコミ"), button:has-text("Reviews")')
+            
+            if await tab_btn.count() > 0:
+                await tab_btn.first.click()
+                print("OK: クチコミタブをクリックしました")
+                await page.wait_for_timeout(5000) # 読み込み待ちを長くする
+            else:
+                # それでも見つからない場合、「〇〇件のクチコミ」というリンクを探して押す
+                print("タブが見つからないため、件数リンクを探します...")
+                await page.get_by_text(re.compile(r"(\d+.*クチコミ|Reviews)")).first.click()
+                print("OK: 件数リンクをクリックしました")
+                await page.wait_for_timeout(5000)
+
         except Exception as e:
             print(f"【失敗】クチコミタブが見つかりません: {e}")
-            print(f"現在のページタイトル: {await page.title()}")
 
         # 2. 並べ替えボタン
         try:
             print("「並べ替え」ボタンを探しています...")
-            sort_btn = page.locator("button", has_text=re.compile(r"(並べ替え|Sort)"))
-            await sort_btn.first.click()
-            print("OK: 並べ替えボタンをクリックしました")
-            await page.wait_for_timeout(2000)
+            # ここも aria-label を優先して探す
+            sort_btn = page.locator('button[aria-label*="並べ替え"], button[aria-label*="Sort"], button:has-text("並べ替え")')
+            
+            if await sort_btn.count() > 0:
+                await sort_btn.first.click()
+                print("OK: 並べ替えボタンをクリックしました")
+                await page.wait_for_timeout(2000)
+            else:
+                print("並べ替えボタンが見つかりません（スキップします）")
         except Exception as e:
-            print(f"【失敗】並べ替えボタンが見つかりません: {e}")
+            print(f"【失敗】並べ替えボタンエラー: {e}")
 
         # 3. 新しい順
         try:
             print("「新しい順」を選択しようとしています...")
+            # メニュー項目を探す
             newest_btn = page.locator('[role="menuitemradio"]', has_text=re.compile(r"(新しい順|Newest)"))
             
             if await newest_btn.count() > 0:
@@ -112,7 +134,7 @@ async def get_latest_review():
         if count > 0:
             raw_text = await reviews.first.inner_text()
             
-            # ★ここでエラーが出ていた部分を修正しました
+            # ログ表示用
             preview_text = raw_text[:50].replace('\n', ' ')
             print(f"【最新の口コミ内容】: {preview_text}...")
 
