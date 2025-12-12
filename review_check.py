@@ -35,10 +35,7 @@ async def get_latest_review():
     async with async_playwright() as p:
         print("\n=== GitHub実行開始 ===")
         
-        # ★重要：GitHubサーバー用設定
-        # 1. headless=True (画面なし)
-        # 2. 画面サイズ固定
-        # 3. User-Agent偽装
+        # GitHubサーバー用設定 (headless=True)
         browser = await p.chromium.launch(headless=True)
         
         context = await browser.new_context(
@@ -52,12 +49,11 @@ async def get_latest_review():
         await page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=60000)
         await page.wait_for_timeout(3000)
 
-        # ★★★ リロード処理（簡易版対策） ★★★
+        # リロード処理
         print("2. 簡易版回避のためリロードします...")
         await page.reload(wait_until="domcontentloaded")
         print("   リロード完了。読み込み待ち...")
         await page.wait_for_timeout(5000)
-        # ★★★★★★★★★★★★★★★★★★★★
 
         # ポップアップ対策（Escキー）
         await page.keyboard.press("Escape")
@@ -120,8 +116,10 @@ async def get_latest_review():
 
         if count > 0:
             raw_text = await reviews.first.inner_text()
-            # ログには最初の50文字だけ出す
-            print(f"【最新口コミ】: {raw_text[:50].replace('\n', ' ')}...")
+            
+            # ★修正点：ここで一度変数に入れてから表示する（エラー回避）
+            preview_text = raw_text[:50].replace('\n', ' ')
+            print(f"【最新口コミ】: {preview_text}...")
             
             current_signature = normalize_text(raw_text[:150]) 
             last_signature = ""
