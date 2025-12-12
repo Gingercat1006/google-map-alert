@@ -33,31 +33,31 @@ def normalize_text(text):
 
 async def get_latest_review():
     async with async_playwright() as p:
-        print("\n=== 実行開始 ===")
-        # ローカル確認用に画面を表示 (headless=False)
-        browser = await p.chromium.launch(
-            headless=True, 
-            slow_mo=1000,
-            args=["--start-maximized"] # 最大化
-        )
+        print("\n=== GitHub実行開始 ===")
+        
+        # ★重要：GitHubサーバー用設定
+        # 1. headless=True (画面なし)
+        # 2. 画面サイズ固定
+        # 3. User-Agent偽装
+        browser = await p.chromium.launch(headless=True)
         
         context = await browser.new_context(
             locale="ja-JP",
-            no_viewport=True, # 最大化を有効にする設定
+            viewport={"width": 1920, "height": 1080},
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
         page = await context.new_page()
 
         print("1. URLへ移動中...")
         await page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=60000)
-        
-        # 少し待ってから...
         await page.wait_for_timeout(3000)
 
-        print("2. 念のためページをリロード（再読み込み）します...")
+        # ★★★ リロード処理（簡易版対策） ★★★
+        print("2. 簡易版回避のためリロードします...")
         await page.reload(wait_until="domcontentloaded")
-        print("   リロード完了。読み込みを待ちます...")
+        print("   リロード完了。読み込み待ち...")
         await page.wait_for_timeout(5000)
+        # ★★★★★★★★★★★★★★★★★★★★
 
         # ポップアップ対策（Escキー）
         await page.keyboard.press("Escape")
@@ -120,6 +120,7 @@ async def get_latest_review():
 
         if count > 0:
             raw_text = await reviews.first.inner_text()
+            # ログには最初の50文字だけ出す
             print(f"【最新口コミ】: {raw_text[:50].replace('\n', ' ')}...")
             
             current_signature = normalize_text(raw_text[:150]) 
@@ -140,7 +141,6 @@ async def get_latest_review():
         else:
             print("❌まだ口コミが取得できません。画面を確認してください。")
 
-        await page.wait_for_timeout(5000)
         await browser.close()
 
 if __name__ == "__main__":
